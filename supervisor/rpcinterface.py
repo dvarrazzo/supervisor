@@ -33,7 +33,8 @@ class SupervisorNamespaceRPCInterface:
 
     def _update(self, text):
         self.update_text = text # for unit tests, mainly
-        if self.supervisord.options.mood < SupervisorStates.RUNNING:
+        if ( isinstance(self.supervisord.options.mood, int) and
+             self.supervisord.options.mood < SupervisorStates.RUNNING ):
             raise RPCError(Faults.SHUTDOWN_STATE)
 
     # RPC API methods
@@ -67,7 +68,7 @@ class SupervisorNamespaceRPCInterface:
     def getState(self):
         """ Return current state of supervisord as a struct
 
-        @return struct A struct with keys string statecode, int statename
+        @return struct A struct with keys int statecode, string statename
         """
         self._update('getState')
 
@@ -117,7 +118,7 @@ class SupervisorNamespaceRPCInterface:
         self._update('clearLog')
 
         logfile = self.supervisord.options.logfile
-        if  logfile is None or not self.supervisord.options.exists(logfile):
+        if logfile is None or not self.supervisord.options.exists(logfile):
             raise RPCError(Faults.NO_FILE)
 
         # there is a race condition here, but ignore it.
@@ -248,7 +249,7 @@ class SupervisorNamespaceRPCInterface:
     def startProcess(self, name, wait=True):
         """ Start a process
 
-        @param string name Process name (or 'group:name', or 'group:*')
+        @param string name Process name (or ``group:name``, or ``group:*``)
         @param boolean wait Wait for process to be fully started
         @return boolean result     Always true unless error
 
@@ -554,6 +555,9 @@ class SupervisorNamespaceRPCInterface:
     def _readProcessLog(self, name, offset, length, channel):
         group, process = self._getGroupAndProcess(name)
 
+        if process is None:
+            raise RPCError(Faults.BAD_NAME, name)
+
         logfile = getattr(process.config, '%s_logfile' % channel)
 
         if logfile is None or not os.path.exists(logfile):
@@ -591,6 +595,9 @@ class SupervisorNamespaceRPCInterface:
 
     def _tailProcessLog(self, name, offset, length, channel):
         group, process = self._getGroupAndProcess(name)
+
+        if process is None:
+            raise RPCError(Faults.BAD_NAME, name)
 
         logfile = getattr(process.config, '%s_logfile' % channel)
 
@@ -656,6 +663,9 @@ class SupervisorNamespaceRPCInterface:
 
         group, process = self._getGroupAndProcess(name)
 
+        if process is None:
+            raise RPCError(Faults.BAD_NAME, name)
+
         try:
             # implies a reopen
             process.removelogs()
@@ -669,7 +679,7 @@ class SupervisorNamespaceRPCInterface:
     def clearAllProcessLogs(self):
         """ Clear all process log files
 
-        @return boolean result      Always return true
+        @return array result   An array of process status info structs
         """
         self._update('clearAllProcessLogs')
         results  = []
@@ -743,7 +753,7 @@ class SupervisorNamespaceRPCInterface:
         try:
             process.write(chars)
         except OSError, why:
-            if why[0] == errno.EPIPE:
+            if why.args[0] == errno.EPIPE:
                 raise RPCError(Faults.NO_FILE, name)
             else:
                 raise
@@ -776,9 +786,14 @@ def make_allfunc(processes, predicate, func, **extra_kwargs):
     callbacks = []
     results = []
 
-    def allfunc(processes=processes, predicate=predicate, func=func,
-                extra_kwargs=extra_kwargs, callbacks=callbacks,
-                results=results):
+    def allfunc(
+        processes=processes,
+        predicate=predicate,
+        func=func,
+        extra_kwargs=extra_kwargs,
+        callbacks=callbacks, # used only to fool scoping, never passed by caller
+        results=results, # used only to fool scoping, never passed by caller
+        ):
         if not callbacks:
 
             for group, process in processes:

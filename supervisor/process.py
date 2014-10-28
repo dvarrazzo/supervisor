@@ -218,7 +218,7 @@ class Subprocess:
         try:
             self.dispatchers, self.pipes = self.config.make_dispatchers(self)
         except OSError, why:
-            code = why[0]
+            code = why.args[0]
             if code == errno.EMFILE:
                 # too many file descriptors open
                 msg = 'too many open files to spawn %r' % self.config.name
@@ -232,7 +232,7 @@ class Subprocess:
         try:
             pid = options.fork()
         except OSError, why:
-            code = why[0]
+            code = why.args[0]
             if code == errno.EAGAIN:
                 # process table full
                 msg  = ('Too many processes in process table to spawn %r' %
@@ -319,7 +319,7 @@ class Subprocess:
                 if cwd is not None:
                     options.chdir(cwd)
             except OSError, why:
-                code = errno.errorcode.get(why[0], why[0])
+                code = errno.errorcode.get(why.args[0], why.args[0])
                 msg = "couldn't chdir to %s: %s\n" % (cwd, code)
                 options.write(2, "supervisor: " + msg)
                 return # finally clause will exit the child process
@@ -330,7 +330,7 @@ class Subprocess:
                     options.setumask(self.config.umask)
                 options.execve(filename, argv, env)
             except OSError, why:
-                code = errno.errorcode.get(why[0], why[0])
+                code = errno.errorcode.get(why.args[0], why.args[0])
                 msg = "couldn't exec %s: %s\n" % (argv[0], code)
                 options.write(2, "supervisor: " + msg)
             except:
@@ -366,6 +366,15 @@ class Subprocess:
         """
         now = time.time()
         options = self.config.options
+
+        # Properly stop processes in BACKOFF state.
+        if self.state == ProcessStates.BACKOFF:
+            msg = ("Attempted to kill %s, which is in BACKOFF state." %
+                   (self.config.name))
+            options.logger.debug(msg)
+            self.change_state(ProcessStates.STOPPED)
+            return None
+
         if not self.pid:
             msg = ("attempted to kill %s with sig %s but it wasn't running" %
                    (self.config.name, signame(sig)))
@@ -463,8 +472,8 @@ class Subprocess:
             self.backoff = 0
             self.exitstatus = es
 
-            if self.state == ProcessStates.STARTING:
-                # XXX I dont know under which circumstances this
+            if self.state == ProcessStates.STARTING: # pragma: no cover
+                # XXX I don't know under which circumstances this
                 # happens, but in the wild, there is a transition that
                 # subverts the RUNNING state (directly from STARTING
                 # to EXITED), so we perform the correct transition
@@ -703,10 +712,10 @@ class FastCGIProcessGroup(ProcessGroup):
         sockManagerKlass = kwargs.get('socketManager', SocketManager)
         self.socket_manager = sockManagerKlass(config.socket_config,
                                                logger=config.options.logger)
-        #It's not required to call get_socket() here but we want
-        #to fail early during start up if there is a config error
+        # It's not required to call get_socket() here but we want
+        # to fail early during start up if there is a config error
         try:
-            sock = self.socket_manager.get_socket()
+            self.socket_manager.get_socket()
         except Exception, e:
             raise ValueError('Could not create FastCGI socket %s: %s' % (self.socket_manager.config(), e))
 
@@ -760,7 +769,6 @@ class EventListenerPool(ProcessGroupBase):
     def _acceptEvent(self, event, head=False):
         # events are required to be instances
         # this has a side effect to fail with an attribute error on 'old style' classes
-        event_type = event.__class__ 
         if not hasattr(event, 'serial'):
             event.serial = new_serial(GlobalSerial)
         if not hasattr(event, 'pool_serials'):
@@ -799,7 +807,7 @@ class EventListenerPool(ProcessGroupBase):
                                                    pool_serial, payload)
                     process.write(envelope)
                 except OSError, why:
-                    if why[0] != errno.EPIPE:
+                    if why.args[0] != errno.EPIPE:
                         raise
                     continue
 

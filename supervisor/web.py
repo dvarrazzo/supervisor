@@ -188,13 +188,20 @@ class TailView(MeldView):
             processname = None
         else:
             processname = form['processname']
+            offset = 0
+
+            limit = form.get('limit', '1024')
+            if limit.isdigit():
+                limit = min(-1024, int(limit)*-1)
+            else:
+                limit = -1024
 
             if not processname:
                 tail = 'No process name found'
             else:
                 rpcinterface = SupervisorNamespaceRPCInterface(supervisord)
                 try:
-                    tail = rpcinterface.readProcessLog(processname, -1024, 0)
+                    tail = rpcinterface.readProcessLog(processname, limit, offset)
                 except RPCError, e:
                     if e.code == Faults.NO_FILE:
                         tail = 'No file for %s' % processname
@@ -210,8 +217,11 @@ class TailView(MeldView):
 
         refresh_anchor = root.findmeld('refresh_anchor')
         if processname is not None:
-            refresh_anchor.attributes(href='tail.html?processname=%s' %
-                                      urllib.quote(processname))
+            refresh_anchor.attributes(
+                href='tail.html?processname=%s&limit=%s' % (
+                    urllib.quote(processname), urllib.quote(str(abs(limit)))
+                    )
+            )
         else:
             refresh_anchor.deparent()
 
@@ -348,13 +358,36 @@ class StatusView(MeldView):
                         callback = rpcinterface.supervisor.startProcess(
                             namespec)
                     except RPCError, e:
-                        if e.code == Faults.SPAWN_ERROR:
-                            def spawnerr():
-                                return 'Process %s spawn error' % namespec
-                            spawnerr.delay = 0.05
-                            return spawnerr
+                        if e.code == Faults.NO_FILE:
+                            msg = 'no such file'
+                        elif e.code == Faults.NOT_EXECUTABLE:
+                            msg = 'file not executable'
+                        elif e.code == Faults.ALREADY_STARTED:
+                            msg = 'already started'
+                        elif e.code == Faults.SPAWN_ERROR:
+                            msg = 'spawn error'
+                        elif e.code == Faults.ABNORMAL_TERMINATION:
+                            msg = 'abnormal termination'
+                        else:
+                            msg = 'unexpected rpc fault code %d' % e.code
+                        def starterr():
+                            return 'ERROR: Process %s: %s' % (namespec, msg)
+                        starterr.delay = 0.05
+                        return starterr
+
                     def startprocess():
-                        if callback() is NOT_DONE_YET:
+                        try:
+                            result = callback()
+                        except RPCError, e:
+                            if e.code == Faults.SPAWN_ERROR:
+                                msg = 'spawn error'
+                            elif e.code == Faults.ABNORMAL_TERMINATION:
+                                msg = 'abnormal termination'
+                            else:
+                                msg = 'unexpected rpc fault code %d' % e.code
+                            return 'ERROR: Process %s: %s' % (namespec, msg)
+
+                        if result is NOT_DONE_YET:
                             return NOT_DONE_YET
                         return 'Process %s started' % namespec
                     startprocess.delay = 0.05

@@ -16,7 +16,6 @@ from supervisor.tests.base import DummyFCGIGroupConfig
 from supervisor.tests.base import DummySocketConfig
 from supervisor.tests.base import DummyProcessGroup
 from supervisor.tests.base import DummyFCGIProcessGroup
-from supervisor.tests.base import DummySocketManager
 
 from supervisor.process import Subprocess
 from supervisor.options import BadCommand
@@ -198,8 +197,8 @@ class SubprocessTests(unittest.TestCase):
         self.assertEqual(result, None)
         self.assertEqual(instance.spawnerr, 'bad filename')
         self.assertEqual(options.logger.data[0], "spawnerr: bad filename")
-        self.failUnless(instance.delay)
-        self.failUnless(instance.backoff)
+        self.assertTrue(instance.delay)
+        self.assertTrue(instance.backoff)
         from supervisor.states import ProcessStates
         self.assertEqual(instance.state, ProcessStates.BACKOFF)
         self.assertEqual(len(L), 2)
@@ -210,7 +209,6 @@ class SubprocessTests(unittest.TestCase):
 
     def test_spawn_fail_make_pipes_emfile(self):
         options = DummyOptions()
-        import errno
         options.make_pipes_error = errno.EMFILE
         config = DummyPConfig(options, 'good', '/good/filename')
         instance = self._makeOne(config)
@@ -225,8 +223,8 @@ class SubprocessTests(unittest.TestCase):
                          "too many open files to spawn 'good'")
         self.assertEqual(options.logger.data[0],
                          "spawnerr: too many open files to spawn 'good'")
-        self.failUnless(instance.delay)
-        self.failUnless(instance.backoff)
+        self.assertTrue(instance.delay)
+        self.assertTrue(instance.backoff)
         from supervisor.states import ProcessStates
         self.assertEqual(instance.state, ProcessStates.BACKOFF)
         self.assertEqual(len(L), 2)
@@ -249,8 +247,8 @@ class SubprocessTests(unittest.TestCase):
         self.assertEqual(instance.spawnerr, 'unknown error: EPERM')
         self.assertEqual(options.logger.data[0],
                          "spawnerr: unknown error: EPERM")
-        self.failUnless(instance.delay)
-        self.failUnless(instance.backoff)
+        self.assertTrue(instance.delay)
+        self.assertTrue(instance.backoff)
         from supervisor.states import ProcessStates
         self.assertEqual(instance.state, ProcessStates.BACKOFF)
         self.assertEqual(len(L), 2)
@@ -260,7 +258,6 @@ class SubprocessTests(unittest.TestCase):
 
     def test_spawn_fork_fail_eagain(self):
         options = DummyOptions()
-        import errno
         options.fork_error = errno.EAGAIN
         config = DummyPConfig(options, 'good', '/good/filename')
         instance = self._makeOne(config)
@@ -277,8 +274,8 @@ class SubprocessTests(unittest.TestCase):
              "spawnerr: Too many processes in process table to spawn 'good'")
         self.assertEqual(len(options.parent_pipes_closed), 6)
         self.assertEqual(len(options.child_pipes_closed), 6)
-        self.failUnless(instance.delay)
-        self.failUnless(instance.backoff)
+        self.assertTrue(instance.delay)
+        self.assertTrue(instance.backoff)
         from supervisor.states import ProcessStates
         self.assertEqual(instance.state, ProcessStates.BACKOFF)
         self.assertEqual(len(L), 2)
@@ -303,8 +300,8 @@ class SubprocessTests(unittest.TestCase):
                          "spawnerr: unknown error: EPERM")
         self.assertEqual(len(options.parent_pipes_closed), 6)
         self.assertEqual(len(options.child_pipes_closed), 6)
-        self.failUnless(instance.delay)
-        self.failUnless(instance.backoff)
+        self.assertTrue(instance.delay)
+        self.assertTrue(instance.backoff)
         from supervisor.states import ProcessStates
         self.assertEqual(instance.state, ProcessStates.BACKOFF)
         self.assertEqual(len(L), 2)
@@ -450,8 +447,8 @@ class SubprocessTests(unittest.TestCase):
         self.assertEqual(len(options.fds_closed), options.minfds - 3)
         msg = options.written[2] # dict, 2 is fd #
         head = "supervisor: couldn't exec /good/filename:"
-        self.failUnless(msg.startswith(head))
-        self.failUnless("exceptions.RuntimeError" in msg)
+        self.assertTrue(msg.startswith(head))
+        self.assertTrue("exceptions.RuntimeError" in msg)
         self.assertEqual(options.privsdropped, None)
         self.assertEqual(options._exitcode, 127)
 
@@ -528,7 +525,7 @@ class SubprocessTests(unittest.TestCase):
         self.assertEqual(len(options.child_pipes_closed), 6)
         self.assertEqual(options.logger.data[0], "spawned: 'good' with pid 10")
         self.assertEqual(instance.spawnerr, None)
-        self.failUnless(instance.delay)
+        self.assertTrue(instance.delay)
         self.assertEqual(instance.config.options.pidhistory[10], instance)
         from supervisor.states import ProcessStates
         self.assertEqual(instance.state, ProcessStates.STARTING)
@@ -555,7 +552,7 @@ class SubprocessTests(unittest.TestCase):
         sent = 'a' * (1 << 13)
         self.assertRaises(OSError, instance.write, sent)
         options.forkpid = 1
-        result = instance.spawn()
+        instance.spawn()
         instance.write(sent)
         stdin_fd = instance.pipes['stdin']
         self.assertEqual(sent, instance.dispatchers[stdin_fd].input_buffer)
@@ -570,10 +567,27 @@ class SubprocessTests(unittest.TestCase):
         sent = 'a' * (1 << 13)
         self.assertRaises(OSError, instance.write, sent)
         options.forkpid = 1
-        result = instance.spawn()
+        instance.spawn()
         stdin_fd = instance.pipes['stdin']
         instance.dispatchers[stdin_fd].close()
         self.assertRaises(OSError, instance.write, sent)
+
+    def test_write_stdin_fd_none(self):
+        executable = '/bin/cat'
+        options = DummyOptions()
+        config = DummyPConfig(options, 'output', executable)
+        instance = self._makeOne(config)
+        options.forkpid = 1
+        instance.spawn()
+        stdin_fd = instance.pipes['stdin']
+        instance.dispatchers[stdin_fd].close()
+        instance.pipes['stdin'] = None
+        try:
+            instance.write('foo')
+            self.fail('nothing raised')
+        except OSError, exc:
+            self.assertEqual(exc.args[0], errno.EPIPE)
+            self.assertEqual(exc.args[1], 'Process has no stdin channel')
 
     def test_write_dispatcher_flush_raises_epipe(self):
         executable = '/bin/cat'
@@ -583,12 +597,12 @@ class SubprocessTests(unittest.TestCase):
         sent = 'a' * (1 << 13)
         self.assertRaises(OSError, instance.write, sent)
         options.forkpid = 1
-        result = instance.spawn()
+        instance.spawn()
         stdin_fd = instance.pipes['stdin']
         instance.dispatchers[stdin_fd].flush_error = errno.EPIPE
         self.assertRaises(OSError, instance.write, sent)
 
-    def dont_test_spawn_and_kill(self):
+    def _dont_test_spawn_and_kill(self):
         # this is a functional test
         from supervisor.tests.base import makeSpew
         try:
@@ -602,28 +616,27 @@ class SubprocessTests(unittest.TestCase):
             instance = self._makeOne(config)
             result = instance.spawn()
             msg = options.logger.data[0]
-            self.failUnless(msg.startswith("spawned: 'spew' with pid"))
+            self.assertTrue(msg.startswith("spawned: 'spew' with pid"))
             self.assertEqual(len(instance.pipes), 6)
-            self.failUnless(instance.pid)
-            self.failUnlessEqual(instance.pid, result)
+            self.assertTrue(instance.pid)
+            self.assertEqual(instance.pid, result)
             origpid = instance.pid
-            import errno
             while 1:
                 try:
                     data = os.popen('ps').read()
                     break
                 except IOError, why:
-                    if why[0] != errno.EINTR:
+                    if why.args[0] != errno.EINTR:
                         raise
                         # try again ;-)
             time.sleep(0.1) # arbitrary, race condition possible
-            self.failUnless(data.find(`origpid`) != -1 )
+            self.assertTrue(data.find(repr(origpid)) != -1 )
             msg = instance.kill(signal.SIGTERM)
             time.sleep(0.1) # arbitrary, race condition possible
             self.assertEqual(msg, None)
             pid, sts = os.waitpid(-1, os.WNOHANG)
             data = os.popen('ps').read()
-            self.assertEqual(data.find(`origpid`), -1) # dubious
+            self.assertEqual(data.find(repr(origpid)), -1) # dubious
         finally:
             try:
                 os.remove(executable)
@@ -642,11 +655,27 @@ class SubprocessTests(unittest.TestCase):
         instance.state = ProcessStates.RUNNING
         instance.stop()
         self.assertEqual(instance.administrative_stop, 1)
-        self.failUnless(instance.delay)
+        self.assertTrue(instance.delay)
         self.assertEqual(options.logger.data[0], 'killing test (pid 11) with '
                          'signal SIGTERM')
         self.assertEqual(instance.killing, 1)
         self.assertEqual(options.kills[11], signal.SIGTERM)
+
+    def test_stop_not_in_stoppable_state_error(self):
+        options = DummyOptions()
+        config = DummyPConfig(options, 'test', '/test')
+        instance = self._makeOne(config)
+        instance.pid = 11
+        dispatcher = DummyDispatcher(writable=True)
+        instance.dispatchers = {'foo':dispatcher}
+        from supervisor.states import ProcessStates
+        instance.state = ProcessStates.STOPPED
+        try:
+            instance.stop()
+            self.fail('nothing raised')
+        except AssertionError, exc:
+            self.assertEqual(exc.args[0], 'Assertion failed for test: '
+                'STOPPED not in RUNNING STARTING STOPPING')
 
     def test_give_up(self):
         options = DummyOptions()
@@ -690,7 +719,7 @@ class SubprocessTests(unittest.TestCase):
         instance.kill(signal.SIGTERM)
         self.assertEqual(options.logger.data[0], 'killing test (pid 11) with '
                          'signal SIGTERM')
-        self.failUnless(options.logger.data[1].startswith(
+        self.assertTrue(options.logger.data[1].startswith(
             'unknown problem killing test'))
         self.assertEqual(instance.killing, 0)
         self.assertEqual(len(L), 2)
@@ -753,6 +782,22 @@ class SubprocessTests(unittest.TestCase):
         self.assertEqual(instance.killing, 1)
         self.assertEqual(options.kills[11], signal.SIGKILL)
         self.assertEqual(L, []) # no event because we didn't change state
+
+    def test_kill_from_backoff(self):
+        options = DummyOptions()
+        config = DummyPConfig(options, 'test', '/test')
+        instance = self._makeOne(config)
+        L = []
+        from supervisor.states import ProcessStates
+        from supervisor import events
+        events.subscribe(events.Event, L.append)
+        instance.state = ProcessStates.BACKOFF
+        instance.kill(signal.SIGKILL)
+        self.assertEqual(options.logger.data[0],
+                         'Attempted to kill test, which is in BACKOFF state.')
+        self.assertEqual(instance.killing, 0)
+        event = L[0]
+        self.assertEqual(event.__class__, events.ProcessStateStoppedEvent)
 
     def test_kill_from_stopping_w_killasgroup(self):
         options = DummyOptions()
@@ -1232,7 +1277,7 @@ class SubprocessTests(unittest.TestCase):
         instance.state = 10
         instance.change_state(ProcessStates.BACKOFF)
         self.assertEqual(instance.backoff, 1)
-        self.failUnless(instance.delay > 0)
+        self.assertTrue(instance.delay > 0)
 
 class FastCGISubprocessTests(unittest.TestCase):
     def _getTargetClass(self):
@@ -1454,7 +1499,7 @@ class ProcessGroupBaseTests(unittest.TestCase):
         group.removelogs()
         self.assertEqual(process1.logsremoved, True)
 
-    def test_cmp(self):
+    def test_ordering_and_comparison(self):
         options = DummyOptions()
         gconfig1 = DummyPGroupConfig(options)
         group1 = self._makeOne(gconfig1)
@@ -1462,13 +1507,19 @@ class ProcessGroupBaseTests(unittest.TestCase):
         gconfig2 = DummyPGroupConfig(options)
         group2 = self._makeOne(gconfig2)
 
-        group1.priority = 5
-        group2.priority = 1
+        config3 = DummyPGroupConfig(options)
+        group3 = self._makeOne(config3)
+
+        group1.config.priority = 5
+        group2.config.priority = 1
+        group3.config.priority = 5
 
         L = [group1, group2]
         L.sort()
 
         self.assertEqual(L, [group2, group1])
+        self.assertNotEqual(group1, group2)
+        self.assertEqual(group1, group3)
 
 class ProcessGroupTests(ProcessGroupBaseTests):
     def _getTargetClass(self):
@@ -1494,6 +1545,40 @@ class ProcessGroupTests(ProcessGroupBaseTests):
         group.processes = {'process1': process1}
         group.transition()
         self.assertEqual(process1.transitioned, True)
+
+class FastCGIProcessGroupTests(unittest.TestCase):
+    def _getTargetClass(self):
+        from supervisor.process import FastCGIProcessGroup
+        return FastCGIProcessGroup
+
+    def _makeOne(self, config, **kwargs):
+        cls = self._getTargetClass()
+        return cls(config, **kwargs)
+
+    def test___init__without_socket_error(self):
+        options = DummyOptions()
+        gconfig = DummyPGroupConfig(options)
+        gconfig.socket_config = None
+        class DummySocketManager(object):
+            def __init__(self, config, logger): pass
+            def get_socket(self): pass
+        self._makeOne(gconfig, socketManager=DummySocketManager)
+        # doesn't fail with exception
+
+    def test___init__with_socket_error(self):
+        options = DummyOptions()
+        gconfig = DummyPGroupConfig(options)
+        gconfig.socket_config = None
+        class DummySocketManager(object):
+            def __init__(self, config, logger): pass
+            def get_socket(self):
+                raise KeyError(5)
+            def config(self):
+                return 'config'
+        self.assertRaises(
+            ValueError,
+            self._makeOne, gconfig, socketManager=DummySocketManager
+            )
 
 class EventListenerPoolTests(ProcessGroupBaseTests):
     def setUp(self):
@@ -1598,7 +1683,6 @@ class EventListenerPoolTests(ProcessGroupBaseTests):
         gconfig = DummyPGroupConfig(options, pconfigs=[pconfig1])
         pool = self._makeOne(gconfig)
         process1 = pool.processes['process1']
-        import errno
         process1.write_error = errno.EPIPE
         process1.listener_state = EventListenerStates.READY
         event = DummyEvent()
@@ -1649,7 +1733,6 @@ class EventListenerPoolTests(ProcessGroupBaseTests):
         pool.transition()
         self.assertEqual(process1.transitioned, True)
         self.assertEqual(pool.event_buffer, [event])
-        data = pool.config.options.logger.data
 
     def test_transition_event_proc_not_running(self):
         options = DummyOptions()
@@ -1689,13 +1772,107 @@ class EventListenerPoolTests(ProcessGroupBaseTests):
         self.assertEqual(process1.transitioned, True)
         self.assertEqual(pool.event_buffer, [])
         header, payload = process1.stdin_buffer.split('\n', 1)
-        self.assertEquals(payload, 'dummy event', payload)
+        self.assertEqual(payload, 'dummy event', payload)
         self.assertEqual(process1.listener_state, EventListenerStates.BUSY)
         self.assertEqual(process1.event, event)
 
-def test_suite():
-    return unittest.findTestCases(sys.modules[__name__])
+    def test_transition_event_proc_running_with_dispatch_throttle_notyet(self):
+        options = DummyOptions()
+        from supervisor.states import ProcessStates
+        pconfig1 = DummyPConfig(options, 'process1', 'process1','/bin/process1')
+        process1 = DummyProcess(pconfig1, state=ProcessStates.RUNNING)
+        gconfig = DummyPGroupConfig(options, pconfigs=[pconfig1])
+        pool = self._makeOne(gconfig)
+        pool.dispatch_throttle = 5
+        pool.last_dispatch = time.time()
+        pool.processes = {'process1': process1}
+        event = DummyEvent()
+        from supervisor.states import EventListenerStates
+        process1.listener_state = EventListenerStates.READY
+        class DummyGroup:
+            config = gconfig
+        process1.group = DummyGroup
+        pool._acceptEvent(event)
+        pool.transition()
+        self.assertEqual(process1.transitioned, True)
+        self.assertEqual(pool.event_buffer, [event]) # not popped
 
-if __name__ == '__main__':
-    unittest.main(defaultTest='test_suite')
+    def test_transition_event_proc_running_with_dispatch_throttle_ready(self):
+        options = DummyOptions()
+        from supervisor.states import ProcessStates
+        pconfig1 = DummyPConfig(options, 'process1', 'process1','/bin/process1')
+        process1 = DummyProcess(pconfig1, state=ProcessStates.RUNNING)
+        gconfig = DummyPGroupConfig(options, pconfigs=[pconfig1])
+        pool = self._makeOne(gconfig)
+        pool.dispatch_throttle = 5
+        pool.last_dispatch = time.time() - 1000
+        pool.processes = {'process1': process1}
+        event = DummyEvent()
+        from supervisor.states import EventListenerStates
+        process1.listener_state = EventListenerStates.READY
+        class DummyGroup:
+            config = gconfig
+        process1.group = DummyGroup
+        pool._acceptEvent(event)
+        pool.transition()
+        self.assertEqual(process1.transitioned, True)
+        self.assertEqual(pool.event_buffer, [])
+        header, payload = process1.stdin_buffer.split('\n', 1)
+        self.assertEqual(payload, 'dummy event', payload)
+        self.assertEqual(process1.listener_state, EventListenerStates.BUSY)
+        self.assertEqual(process1.event, event)
 
+    def test__dispatchEvent_notready(self):
+        options = DummyOptions()
+        from supervisor.states import ProcessStates
+        pconfig1 = DummyPConfig(options, 'process1', 'process1','/bin/process1')
+        process1 = DummyProcess(pconfig1, state=ProcessStates.STOPPED)
+        gconfig = DummyPGroupConfig(options, pconfigs=[pconfig1])
+        pool = self._makeOne(gconfig)
+        pool.processes = {'process1': process1}
+        event = DummyEvent()
+        pool._acceptEvent(event)
+        self.assertEqual(pool._dispatchEvent(event), False)
+
+    def test__dispatchEvent_proc_write_raises_non_EPIPE_OSError(self):
+        options = DummyOptions()
+        from supervisor.states import ProcessStates
+        pconfig1 = DummyPConfig(options, 'process1', 'process1','/bin/process1')
+        process1 = DummyProcess(pconfig1, state=ProcessStates.RUNNING)
+        def raise_epipe(envelope):
+            raise OSError(errno.EAGAIN)
+        process1.write = raise_epipe
+        gconfig = DummyPGroupConfig(options, pconfigs=[pconfig1])
+        pool = self._makeOne(gconfig)
+        pool.processes = {'process1': process1}
+        event = DummyEvent()
+        from supervisor.states import EventListenerStates
+        process1.listener_state = EventListenerStates.READY
+        class DummyGroup:
+            config = gconfig
+        process1.group = DummyGroup
+        pool._acceptEvent(event)
+        self.assertRaises(OSError, pool._dispatchEvent, event)
+
+class test_new_serial(unittest.TestCase):
+    def _callFUT(self, inst):
+        from supervisor.process import new_serial
+        return new_serial(inst)
+
+    def test_inst_serial_is_maxint(self):
+        class Inst(object):
+            def __init__(self):
+                self.serial = sys.maxint
+        inst = Inst()
+        result = self._callFUT(inst)
+        self.assertEqual(inst.serial, 0)
+        self.assertEqual(result, 0)
+
+    def test_inst_serial_is_not_maxint(self):
+        class Inst(object):
+            def __init__(self):
+                self.serial = 1
+        inst = Inst()
+        result = self._callFUT(inst)
+        self.assertEqual(inst.serial, 2)
+        self.assertEqual(result, 2)

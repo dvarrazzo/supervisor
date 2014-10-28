@@ -9,7 +9,7 @@ Options:
 -h/--help -- print usage message and exit
 -i/--interactive -- start an interactive shell after executing commands
 -s/--serverurl URL -- URL on which supervisord server is listening
-     (default "http://localhost:9001").  
+     (default "http://localhost:9001").
 -u/--username -- username to use for authentication with server
 -p/--password -- password to use for authentication with server
 -r/--history-file -- keep a readline history (if readline is available)
@@ -34,6 +34,7 @@ import threading
 from supervisor.medusa import asyncore_25 as asyncore
 
 from supervisor.options import ClientOptions
+from supervisor.options import make_namespec
 from supervisor.options import split_namespec
 from supervisor import xmlrpc
 from supervisor import states
@@ -43,7 +44,7 @@ class fgthread(threading.Thread):
     To be used for foreground output/error streaming.
     http://mail.python.org/pipermail/python-list/2004-May/260937.html
     """
-  
+
     def __init__(self, program, ctl):
         threading.Thread.__init__(self)
         import http_client
@@ -101,13 +102,14 @@ class Controller(cmd.Cmd):
         self.options = options
         self.prompt = self.options.prompt + '> '
         self.options.plugins = []
-        self.vocab = ['add','exit','maintail','pid','reload',
-                      'restart','start','stop','version','clear',
-                      'fg','open','quit','remove','shutdown','status',
-                      'tail','help']
+        self.vocab = ['help']
+        self._complete_info = None
         cmd.Cmd.__init__(self, completekey, stdin, stdout)
         for name, factory, kwargs in self.options.plugin_factories:
             plugin = factory(self, **kwargs)
+            for a in dir(plugin):
+                if a.startswith('do_') and callable(getattr(plugin, a)):
+                    self.vocab.append(a[3:])
             self.options.plugins.append(plugin)
             plugin.name = name
 
@@ -132,6 +134,7 @@ class Controller(cmd.Cmd):
             return self.emptyline()
         if cmd is None:
             return self.default(line)
+        self._complete_info = None
         self.lastcmd = line
         if cmd == '':
             return self.default(line)
@@ -159,7 +162,7 @@ class Controller(cmd.Cmd):
                 do_func(arg)
             except SystemExit:
                 raise
-            except Exception, e:
+            except Exception:
                 (file, fun, line), t, v, tbinfo = asyncore.compact_traceback()
                 error = 'error: %s, %s: file: %s line: %s' % (t, v, file, line)
                 self.output(error)
@@ -181,7 +184,7 @@ class Controller(cmd.Cmd):
             if isinstance(stuff, unicode):
                 stuff = stuff.encode('utf-8')
             self.stdout.write(stuff + '\n')
-    
+
     def get_supervisor(self):
         return self.get_server_proxy('supervisor')
 
@@ -212,90 +215,91 @@ class Controller(cmd.Cmd):
                     '[rpcinterface:supervisor] section is enabled in the '
                     'configuration file (see sample.conf).')
                 return False
-            raise 
+            raise
         except socket.error, why:
-            if why[0] == errno.ECONNREFUSED:
+            if why.args[0] == errno.ECONNREFUSED:
                 self.output('%s refused connection' % self.options.serverurl)
                 return False
-            elif why[0] == errno.ENOENT:
+            elif why.args[0] == errno.ENOENT:
                 self.output('%s no such file' % self.options.serverurl)
                 return False
             raise
         return True
 
-    def completionmatches(self,text,line,flag=0):
-        groups=[]
-        programs=[]
-        groupwiseprograms={}
-        info = self.get_supervisor().getAllProcessInfo()
-        for i in info:
-            programs.append(i['name'])
-            if i['group'] not in groups:
-                groups.append(i['group'])
-                groupwiseprograms[i['group']]=[]
-            groupwiseprograms[i['group']].append(i['name'])
-        total=[]
-        for i in groups:
-            if i in programs:
-                total.append(i+' ')
-            else:
-                for n in groupwiseprograms[i]:
-                    total.append(i+':'+n+' ')
-        if flag:
-            # add/remove require only the group name
-            return [i+' ' for i in groups if i.startswith(text)]
-        if len(line.split()) == 1:
-            return total
-        else:
-            current=line.split()[-1]
-            if line.endswith(' ') and len(line.split()) > 1:
-                results=[i for i in total if i.startswith(text)]
-                return results
-            if ':' in current:
-                g=current.split(':')[0]
-                results = [i+' ' for i in groupwiseprograms[g]
-                           if i.startswith(text)]
-                return results
-            results = [i for i in total if i.startswith(text)]
-            return results
-
-    def complete(self,text,state):
-        try:
+    def complete(self, text, state, line=None):
+        """Completer function that Cmd will register with readline using
+        readline.set_completer().  This function will be called by readline
+        as complete(text, state) where text is a fragment to complete and
+        state is an integer (0..n).  Each call returns a string with a new
+        completion.  When no more are available, None is returned."""
+        if line is None: # line is only set in tests
             import readline
-        except ImportError:
-            return None
-        line = readline.get_line_buffer()
-        if line == '':
-            results = [i+' ' for i in self.vocab if i.startswith(text)]+[None]
-            return results[state]
+            line = readline.get_line_buffer()
+
+        # take the last phrase from a line like "stop foo; start bar"
+        phrase = line.split(';')[-1]
+
+        matches = []
+        # blank phrase completes to action list
+        if not phrase.strip():
+            matches = self._complete_actions(text)
         else:
-            exp = line.split()[0]
-            if exp in ['start','stop','restart','clear','status','tail','fg','pid']:
-                if not line.endswith(' ') and len(line.split()) == 1:
-                    return [text + ' ', None][state]
-                if exp == 'fg':
-                    if line.endswith(' ') and len(line.split()) > 1:
-                        return None
-                results = self.completionmatches(text,line)+[None]
-                return results[state]
-            elif exp in ['maintail','pid','reload','shutdown','exit','open',
-                         'quit','version','EOF']:
-                return None
-            elif exp == 'help':
-                if line.endswith(' ') and len(line.split()) > 1:
-                    return None
-                results=[i+' ' for i in self.vocab if i.startswith(text)]+[None]
-                return results[state]
-            elif exp in ['add','remove']:
-                results=self.completionmatches(text,line,flag=1)+[None]
-                return results[state]
+            words = phrase.split()
+            action = words[0]
+            # incomplete action completes to action list
+            if len(words) == 1 and not phrase.endswith(' '):
+                matches = self._complete_actions(text)
+            # actions that accept an action name
+            elif action in ('help'):
+                matches = self._complete_actions(text)
+            # actions that accept a group name
+            elif action in ('add', 'remove', 'update'):
+                matches = self._complete_groups(text)
+            # actions that accept a process name
+            elif action in ('clear', 'fg', 'pid', 'restart', 'start',
+                            'stop', 'status', 'tail'):
+                matches = self._complete_processes(text)
+        if len(matches) > state:
+            return matches[state]
+
+    def _complete_actions(self, text):
+        """Build a completion list of action names matching text"""
+        return [ a + ' ' for a in self.vocab if a.startswith(text)]
+
+    def _complete_groups(self, text):
+        """Build a completion list of group names matching text"""
+        groups = []
+        for info in self._get_complete_info():
+            if info['group'] not in groups:
+                groups.append(info['group'])
+        return [ g + ' ' for g in groups if g.startswith(text) ]
+
+    def _complete_processes(self, text):
+        """Build a completion list of process names matching text"""
+        processes = []
+        for info in self._get_complete_info():
+            if ':' in text or info['name'] != info['group']:
+                processes.append('%s:%s' % (info['group'], info['name']))
+                if '%s:*' % info['group'] not in processes:
+                    processes.append('%s:*' % info['group'])
             else:
-                results=[i+' ' for i in self.vocab if i.startswith(text)]+[None]
-                return results[state]
+                processes.append(info['name'])
+        return [ p + ' ' for p in processes if p.startswith(text) ]
+
+    def _get_complete_info(self):
+        """Get all process info used for completion.  We cache this between
+        commands to reduce XML-RPC calls because readline may call
+        complete() many times if the user hits tab only once."""
+        if self._complete_info is None:
+            self._complete_info = self.get_supervisor().getAllProcessInfo()
+        return self._complete_info
 
     def do_help(self, arg):
-        for plugin in self.options.plugins:
-            plugin.do_help(arg)
+        if arg.strip() == 'help':
+            self.help_help()
+        else:
+            for plugin in self.options.plugins:
+                plugin.do_help(arg)
 
     def help_help(self):
         self.output("help\t\tPrint a list of available actions")
@@ -335,13 +339,13 @@ class ControllerPluginBase:
                 func = getattr(self, 'help_' + arg)
             except AttributeError:
                 try:
-                    doc=getattr(self, 'do_' + arg).__doc__
+                    doc = getattr(self, 'do_' + arg).__doc__
                     if doc:
-                        self.ctl.stdout.write("%s\n"%str(doc))
+                        self.ctl.output(doc)
                         return
                 except AttributeError:
                     pass
-                self.ctl.stdout.write("%s\n"%str(self.ctl.nohelp % (arg,)))
+                self.ctl.output(self.ctl.nohelp % (arg,))
                 return
             func()
         else:
@@ -368,8 +372,8 @@ class ControllerPluginBase:
                         cmds_doc.append(cmd)
                     else:
                         cmds_undoc.append(cmd)
-            self.ctl.stdout.write("\n")
-            self.ctl.print_topics(self.doc_header,   cmds_doc,   15,80)
+            self.ctl.output('')
+            self.ctl.print_topics(self.doc_header, cmds_doc, 15, 80)
 
 class DefaultControllerPlugin(ControllerPluginBase):
     name = 'default'
@@ -405,8 +409,8 @@ class DefaultControllerPlugin(ControllerPluginBase):
     def do_tail(self, arg):
         if not self.ctl.upcheck():
             return
-        
-        args = arg.strip().split()
+
+        args = arg.split()
 
         if len(args) < 1:
             self.ctl.output('Error: too few arguments')
@@ -473,6 +477,8 @@ class DefaultControllerPlugin(ControllerPluginBase):
                 elif e.faultCode == xmlrpc.Faults.BAD_NAME:
                     self.ctl.output(template % (name,
                                              'no such process name'))
+                else:
+                    raise
             else:
                 self.ctl.output(output)
 
@@ -489,8 +495,8 @@ class DefaultControllerPlugin(ControllerPluginBase):
     def do_maintail(self, arg):
         if not self.ctl.upcheck():
             return
-        
-        args = arg.strip().split()
+
+        args = arg.split()
 
         if len(args) > 1:
             self.ctl.output('Error: too many arguments')
@@ -513,7 +519,7 @@ class DefaultControllerPlugin(ControllerPluginBase):
             else:
                 self.ctl.output('Error: bad argument %s' % args[0])
                 return
-            
+
         else:
             bytes = 1600
 
@@ -528,6 +534,8 @@ class DefaultControllerPlugin(ControllerPluginBase):
             elif e.faultCode == xmlrpc.Faults.FAILED:
                 self.ctl.output(template % ('supervisord',
                                          'unknown error reading log'))
+            else:
+                raise
         else:
             self.ctl.output(output)
 
@@ -550,51 +558,67 @@ class DefaultControllerPlugin(ControllerPluginBase):
     def help_exit(self):
         self.ctl.output("exit\tExit the supervisor shell.")
 
-    def _procrepr(self, info):
-        template = '%(name)-32s %(state)-10s %(desc)s'
-        if info['name'] == info['group']:
-            name = info['name']
-        else:
-            name = '%s:%s' % (info['group'], info['name'])
-                    
-        return template % {'name':name, 'state':info['statename'],
-                           'desc':info['description']}
+    def _show_statuses(self, process_infos):
+        namespecs, maxlen = [], 30
+        for i, info in enumerate(process_infos):
+            namespecs.append(make_namespec(info['group'], info['name']))
+            if len(namespecs[i]) > maxlen:
+                maxlen = len(namespecs[i])
+
+        template = '%(namespec)-' + str(maxlen+3) + 's%(state)-10s%(desc)s'
+        for i, info in enumerate(process_infos):
+            line = template % {'namespec': namespecs[i],
+                               'state': info['statename'],
+                               'desc': info['description']}
+            self.ctl.output(line)
 
     def do_status(self, arg):
         if not self.ctl.upcheck():
             return
-        
+
         supervisor = self.ctl.get_supervisor()
+        all_infos = supervisor.getAllProcessInfo()
 
-        names = arg.strip().split()
-
-        if names:
-            for name in names:
-                try:
-                    info = supervisor.getProcessInfo(name)
-                except xmlrpclib.Fault, e:
-                    if e.faultCode == xmlrpc.Faults.BAD_NAME:
-                        self.ctl.output('No such process %s' % name)
-                    else:
-                        raise
-                    continue
-                self.ctl.output(self._procrepr(info))
+        names = arg.split()
+        if not names or "all" in names:
+            matching_infos = all_infos
         else:
-            for info in supervisor.getAllProcessInfo():
-                self.ctl.output(self._procrepr(info))
+            matching_infos = []
+
+            for name in names:
+                bad_name = True
+                group_name, process_name = split_namespec(name)
+
+                for info in all_infos:
+                    matched = info['group'] == group_name
+                    if process_name is not None:
+                        matched = matched and info['name'] == process_name
+
+                    if matched:
+                        bad_name = False
+                        matching_infos.append(info)
+
+                if bad_name:
+                    if process_name is None:
+                        msg = "%s: ERROR (no such group)" % group_name
+                    else:
+                        msg = "%s: ERROR (no such process)" % name
+                    self.ctl.output(msg)
+        self._show_statuses(matching_infos)
 
     def help_status(self):
-        self.ctl.output("status\t\t\tGet all process status info.")
-        self.ctl.output(
-            "status <name>\t\tGet status on a single process by name.")
-        self.ctl.output("status <name> <name>\tGet status on multiple named "
-                     "processes.")
+        self.ctl.output("status <name>\t\tGet status for a single process")
+        self.ctl.output("status <gname>:*\tGet status for all "
+                        "processes in a group")
+        self.ctl.output("status <name> <name>\tGet status for multiple named "
+                        "processes")
+        self.ctl.output("status\t\t\tGet all process status info")
 
     def do_pid(self, arg):
         supervisor = self.ctl.get_supervisor()
         if not self.ctl.upcheck():
             return
-        names = arg.strip().split()
+        names = arg.split()
         if not names:
             pid = supervisor.getPID()
             self.ctl.output(str(pid))
@@ -610,18 +634,18 @@ class DefaultControllerPlugin(ControllerPluginBase):
                         self.ctl.output('No such process %s' % name)
                     else:
                         raise
-                    continue
-                self.ctl.output(str(info['pid']))
+                else:
+                    self.ctl.output(str(info['pid']))
 
     def help_pid(self):
-        self.ctl.output("pid\t\t\tGet the PID of supervisord.")    
+        self.ctl.output("pid\t\t\tGet the PID of supervisord.")
         self.ctl.output("pid <name>\t\tGet the PID of a single "
             "child process by name.")
         self.ctl.output("pid all\t\t\tGet the PID of every child "
             "process, one per line.")
 
     def _startresult(self, result):
-        name = result['name']
+        name = make_namespec(result['group'], result['name'])
         code = result['status']
         template = '%s: ERROR (%s)'
         if code == xmlrpc.Faults.BAD_NAME:
@@ -645,7 +669,7 @@ class DefaultControllerPlugin(ControllerPluginBase):
         if not self.ctl.upcheck():
             return
 
-        names = arg.strip().split()
+        names = arg.split()
         supervisor = self.ctl.get_supervisor()
 
         if not names:
@@ -658,24 +682,33 @@ class DefaultControllerPlugin(ControllerPluginBase):
             for result in results:
                 result = self._startresult(result)
                 self.ctl.output(result)
-                
+
         else:
             for name in names:
                 group_name, process_name = split_namespec(name)
                 if process_name is None:
-                    results = supervisor.startProcessGroup(group_name)
-                    for result in results:
-                        result = self._startresult(result)
-                        self.ctl.output(result)
+                    try:
+                        results = supervisor.startProcessGroup(group_name)
+                        for result in results:
+                            result = self._startresult(result)
+                            self.ctl.output(result)
+                    except xmlrpclib.Fault, e:
+                        if e.faultCode == xmlrpc.Faults.BAD_NAME:
+                            error = "%s: ERROR (no such group)" % group_name
+                            self.ctl.output(error)
+                        else:
+                            raise
                 else:
                     try:
                         result = supervisor.startProcess(name)
                     except xmlrpclib.Fault, e:
-                        error = self._startresult({'status':e.faultCode,
-                                                   'name':name,
-                                                   'description':e.faultString})
+                        error = self._startresult({'status': e.faultCode,
+                                                   'name': process_name,
+                                                   'group': group_name,
+                                                   'description': e.faultString})
                         self.ctl.output(error)
                     else:
+                        name = make_namespec(group_name, process_name)
                         self.ctl.output('%s: started' % name)
 
     def help_start(self):
@@ -686,7 +719,7 @@ class DefaultControllerPlugin(ControllerPluginBase):
         self.ctl.output("start all\t\tStart all processes")
 
     def _stopresult(self, result):
-        name = result['name']
+        name = make_namespec(result['group'], result['name'])
         code = result['status']
         fault_string = result['description']
         template = '%s: ERROR (%s)'
@@ -705,7 +738,7 @@ class DefaultControllerPlugin(ControllerPluginBase):
         if not self.ctl.upcheck():
             return
 
-        names = arg.strip().split()
+        names = arg.split()
         supervisor = self.ctl.get_supervisor()
 
         if not names:
@@ -723,19 +756,28 @@ class DefaultControllerPlugin(ControllerPluginBase):
             for name in names:
                 group_name, process_name = split_namespec(name)
                 if process_name is None:
-                    results = supervisor.stopProcessGroup(group_name)
-                    for result in results:
-                        result = self._stopresult(result)
-                        self.ctl.output(result)
+                    try:
+                        results = supervisor.stopProcessGroup(group_name)
+                        for result in results:
+                            result = self._stopresult(result)
+                            self.ctl.output(result)
+                    except xmlrpclib.Fault, e:
+                        if e.faultCode == xmlrpc.Faults.BAD_NAME:
+                            error = "%s: ERROR (no such group)" % group_name
+                            self.ctl.output(error)
+                        else:
+                            raise
                 else:
                     try:
                         result = supervisor.stopProcess(name)
                     except xmlrpclib.Fault, e:
-                        error = self._stopresult({'status':e.faultCode,
-                                                  'name':name,
+                        error = self._stopresult({'status': e.faultCode,
+                                                  'name': process_name,
+                                                  'group': group_name,
                                                   'description':e.faultString})
                         self.ctl.output(error)
                     else:
+                        name = make_namespec(group_name, process_name)
                         self.ctl.output('%s: stopped' % name)
 
     def help_stop(self):
@@ -748,7 +790,7 @@ class DefaultControllerPlugin(ControllerPluginBase):
         if not self.ctl.upcheck():
             return
 
-        names = arg.strip().split()
+        names = arg.split()
 
         if not names:
             self.ctl.output('Error: restart requires a process name')
@@ -785,10 +827,10 @@ class DefaultControllerPlugin(ControllerPluginBase):
                 else:
                     raise
             except socket.error, e:
-                if e[0] == errno.ECONNREFUSED:
+                if e.args[0] == errno.ECONNREFUSED:
                     msg = 'ERROR: %s refused connection (already shut down?)'
                     self.ctl.output(msg % self.ctl.options.serverurl)
-                elif e[0] == errno.ENOENT:
+                elif e.args[0] == errno.ENOENT:
                     msg = 'ERROR: %s no such file (already shut down?)'
                     self.ctl.output(msg % self.ctl.options.serverurl)
                 else:
@@ -813,6 +855,8 @@ class DefaultControllerPlugin(ControllerPluginBase):
             except xmlrpclib.Fault, e:
                 if e.faultCode == xmlrpc.Faults.SHUTDOWN_STATE:
                     self.ctl.output('ERROR: already shutting down')
+                else:
+                    raise
             else:
                 self.ctl.output('Restarted supervisord')
 
@@ -835,10 +879,7 @@ class DefaultControllerPlugin(ControllerPluginBase):
             self.ctl.output("No config updates to processes")
 
     def _formatConfigInfo(self, configinfo):
-        if configinfo['group'] == configinfo['name']:
-            name = configinfo['group']
-        else:
-            name = "%s:%s" % (configinfo['group'], configinfo['name'])
+        name = make_namespec(configinfo['group'], configinfo['name'])
         formatted = { 'name': name }
         if configinfo['inuse']:
             formatted['inuse'] = 'in use'
@@ -861,6 +902,8 @@ class DefaultControllerPlugin(ControllerPluginBase):
         except xmlrpclib.Fault, e:
             if e.faultCode == xmlrpc.Faults.SHUTDOWN_STATE:
                 self.ctl.output('ERROR: supervisor shutting down')
+            else:
+                raise
         else:
             for pinfo in configinfo:
                 self.ctl.output(self._formatConfigInfo(pinfo))
@@ -886,7 +929,7 @@ class DefaultControllerPlugin(ControllerPluginBase):
         self.ctl.output("reread \t\t\tReload the daemon's configuration files")
 
     def do_add(self, arg):
-        names = arg.strip().split()
+        names = arg.split()
 
         supervisor = self.ctl.get_supervisor()
         for name in names:
@@ -910,12 +953,12 @@ class DefaultControllerPlugin(ControllerPluginBase):
                         "for process/group")
 
     def do_remove(self, arg):
-        names = arg.strip().split()
+        names = arg.split()
 
         supervisor = self.ctl.get_supervisor()
         for name in names:
             try:
-                result = supervisor.removeProcessGroup(name)
+                supervisor.removeProcessGroup(name)
             except xmlrpclib.Fault, e:
                 if e.faultCode == xmlrpc.Faults.STILL_RUNNING:
                     self.ctl.output('ERROR: process/group still running: %s'
@@ -944,11 +987,32 @@ class DefaultControllerPlugin(ControllerPluginBase):
                 self.ctl.output('ERROR: already shutting down')
                 return
             else:
-                raise e
+                raise
 
         added, changed, removed = result[0]
+        valid_gnames = set(arg.split())
+
+        # If all is specified treat it as if nothing was specified.
+        if "all" in valid_gnames:
+            valid_gnames = set()
+
+        # If any gnames are specified we need to verify that they are
+        # valid in order to print a useful error message.
+        if valid_gnames:
+            groups = set()
+            for info in supervisor.getAllProcessInfo():
+                groups.add(info['group'])
+            # New gnames would not currently exist in this set so
+            # add those as well.
+            groups.update(added)
+
+            for gname in valid_gnames:
+                if gname not in groups:
+                    self.ctl.output('ERROR: no such group: %s' % gname)
 
         for gname in removed:
+            if valid_gnames and gname not in valid_gnames:
+                continue
             results = supervisor.stopProcessGroup(gname)
             log(gname, "stopped")
 
@@ -961,6 +1025,8 @@ class DefaultControllerPlugin(ControllerPluginBase):
             log(gname, "removed process group")
 
         for gname in changed:
+            if valid_gnames and gname not in valid_gnames:
+                continue
             results = supervisor.stopProcessGroup(gname)
             log(gname, "stopped")
 
@@ -969,14 +1035,18 @@ class DefaultControllerPlugin(ControllerPluginBase):
             log(gname, "updated process group")
 
         for gname in added:
+            if valid_gnames and gname not in valid_gnames:
+                continue
             supervisor.addProcessGroup(gname)
             log(gname, "added process group")
 
     def help_update(self):
-        self.ctl.output("update\t\tReload config and add/remove as necessary")
+        self.ctl.output("update\t\t\tReload config and add/remove as necessary")
+        self.ctl.output("update all\t\tReload config and add/remove as necessary")
+        self.ctl.output("update <gname> [...]\tUpdate specific groups")
 
     def _clearresult(self, result):
-        name = result['name']
+        name = make_namespec(result['group'], result['name'])
         code = result['status']
         template = '%s: ERROR (%s)'
         if code == xmlrpc.Faults.BAD_NAME:
@@ -991,7 +1061,7 @@ class DefaultControllerPlugin(ControllerPluginBase):
         if not self.ctl.upcheck():
             return
 
-        names = arg.strip().split()
+        names = arg.split()
 
         if not names:
             self.ctl.output('Error: clear requires a process name')
@@ -1005,18 +1075,19 @@ class DefaultControllerPlugin(ControllerPluginBase):
             for result in results:
                 result = self._clearresult(result)
                 self.ctl.output(result)
-
         else:
-
             for name in names:
+                group_name, process_name = split_namespec(name)
                 try:
                     result = supervisor.clearProcessLogs(name)
                 except xmlrpclib.Fault, e:
-                    error = self._clearresult({'status':e.faultCode,
-                                               'name':name,
-                                               'description':e.faultString})
+                    error = self._clearresult({'status': e.faultCode,
+                                               'name': process_name,
+                                               'group': group_name,
+                                               'description': e.faultString})
                     self.ctl.output(error)
                 else:
+                    name = make_namespec(group_name, process_name)
                     self.ctl.output('%s: cleared' % name)
 
     def help_clear(self):
@@ -1117,6 +1188,12 @@ def main(args=None, options=None):
     if options.interactive:
         try:
             import readline
+            delims = readline.get_completer_delims()
+            delims = delims.replace(':', '') # "group:process" as one word
+            delims = delims.replace('*', '') # "group:*" as one word
+            delims = delims.replace('-', '') # names with "-" as one word
+            readline.set_completer_delims(delims)
+
             if options.history_file:
                 try:
                     readline.read_history_file(options.history_file)

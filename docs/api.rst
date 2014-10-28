@@ -247,8 +247,8 @@ Process Control
 
         .. describe:: stop
 
-            UNIX timestamp of when the process ended, or 0 if the process is
-            still running.
+            UNIX timestamp of when the process last ended, or 0 if the process
+            has never been stopped.
 
         .. describe:: now
 
@@ -257,11 +257,11 @@ Process Control
 
         .. describe:: state
 
-            State code, see table below.
+            State code, see :ref:`process_states`.
 
         .. describe:: statename
 
-            String description of `state`, see table below.
+            String description of `state`, see :ref:`process_states`.
 
         .. describe:: stdout_logfile
 
@@ -298,6 +298,8 @@ Process Control
     .. automethod:: startAllProcesses
 
     .. automethod:: startProcessGroup
+
+    .. automethod:: stopProcess
 
     .. automethod:: stopProcessGroup
 

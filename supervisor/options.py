@@ -101,7 +101,8 @@ class Options:
         here = os.path.dirname(os.path.dirname(sys.argv[0]))
         searchpaths = [os.path.join(here, 'etc', 'supervisord.conf'),
                        os.path.join(here, 'supervisord.conf'),
-                       'supervisord.conf', 'etc/supervisord.conf',
+                       'supervisord.conf',
+                       'etc/supervisord.conf',
                        '/etc/supervisord.conf']
         self.searchpaths = searchpaths
 
@@ -169,41 +170,41 @@ class Options:
         """
         if flag is not None:
             if handler is not None:
-                raise ValueError, "use at most one of flag= and handler="
+                raise ValueError("use at most one of flag= and handler=")
             if not long and not short:
-                raise ValueError, "flag= requires a command line flag"
+                raise ValueError("flag= requires a command line flag")
             if short and short.endswith(":"):
-                raise ValueError, "flag= requires a command line flag"
+                raise ValueError("flag= requires a command line flag")
             if long and long.endswith("="):
-                raise ValueError, "flag= requires a command line flag"
+                raise ValueError("flag= requires a command line flag")
             handler = lambda arg, flag=flag: flag
 
         if short and long:
             if short.endswith(":") != long.endswith("="):
-                raise ValueError, "inconsistent short/long options: %r %r" % (
-                    short, long)
+                raise ValueError("inconsistent short/long options: %r %r" % (
+                    short, long))
 
         if short:
             if short[0] == "-":
-                raise ValueError, "short option should not start with '-'"
+                raise ValueError("short option should not start with '-'")
             key, rest = short[:1], short[1:]
             if rest not in ("", ":"):
-                raise ValueError, "short option should be 'x' or 'x:'"
+                raise ValueError("short option should be 'x' or 'x:'")
             key = "-" + key
             if self.options_map.has_key(key):
-                raise ValueError, "duplicate short option key '%s'" % key
+                raise ValueError("duplicate short option key '%s'" % key)
             self.options_map[key] = (name, handler)
             self.short_options.append(short)
 
         if long:
             if long[0] == "-":
-                raise ValueError, "long option should not start with '-'"
+                raise ValueError("long option should not start with '-'")
             key = long
             if key[-1] == "=":
                 key = key[:-1]
             key = "--" + key
             if self.options_map.has_key(key):
-                raise ValueError, "duplicate long option key '%s'" % key
+                raise ValueError("duplicate long option key '%s'" % key)
             self.options_map[key] = (name, handler)
             self.long_options.append(long)
 
@@ -306,7 +307,7 @@ class Options:
 
     def process_config(self, do_usage=True):
         """Process configuration data structure.
-        
+
         This includes reading config file if necessary, setting defaults etc.
         """
         if self.configfile:
@@ -349,6 +350,12 @@ class Options:
             else:
                 # if this is called from an RPC method, raise an error
                 raise ValueError(msg)
+
+    def exists(self, path):
+        return os.path.exists(path)
+
+    def open(self, fn, mode='r'):
+        return open(fn, mode)
 
     def get_plugins(self, parser, factory_key, section_prefix):
         factories = []
@@ -517,10 +524,10 @@ class ServerOptions(Options):
 
         section = self.configroot.supervisord
         if not hasattr(fp, 'read'):
-            if not os.path.exists(fp):
+            if not self.exists(fp):
                 raise ValueError("could not find config file %s" % fp)
             try:
-                fp = open(fp, 'r')
+                fp = self.open(fp, 'r')
             except (IOError, OSError):
                 raise ValueError("could not read config file %s" % fp)
         parser = UnhosedConfigParser()
@@ -541,7 +548,12 @@ class ServerOptions(Options):
                 base = '.'
             for pattern in files:
                 pattern = os.path.join(base, pattern)
-                for filename in glob.glob(pattern):
+                filenames = glob.glob(pattern)
+                if not filenames:
+                    self.parse_warnings.append(
+                        'No file matches via include "%s"' % pattern)
+                    continue
+                for filename in filenames:
                     self.parse_warnings.append(
                         'Included extra file "%s" during parsing' % filename)
                     try:
@@ -551,7 +563,7 @@ class ServerOptions(Options):
 
         sections = parser.sections()
         if not 'supervisord' in sections:
-            raise ValueError, '.ini file does not include supervisord section'
+            raise ValueError('.ini file does not include supervisord section')
         get = parser.getdefault
         section.minfds = integer(get('minfds', 1024))
         section.minprocs = integer(get('minprocs', 200))
@@ -747,7 +759,7 @@ class ServerOptions(Options):
             if socket_owner is None:
                 uid = os.getuid()
                 if proc_uid is not None and proc_uid != uid:
-                    socket_owner = (proc_uid, self.get_gid_for_uid(proc_uid))
+                    socket_owner = (proc_uid, gid_for_uid(proc_uid))
 
             if socket_mode is None:
                 socket_mode = 0700
@@ -766,10 +778,6 @@ class ServerOptions(Options):
             return InetStreamSocketConfig(host, port)
 
         raise ValueError("Bad socket format %s", sock)
-
-    def get_gid_for_uid(self, uid):
-        pwrec = pwd.getpwuid(uid)
-        return pwrec[3]
 
     def processes_from_section(self, parser, section, group_name,
                                klass=None):
@@ -796,7 +804,6 @@ class ServerOptions(Options):
         stdout_events = boolean(get(section, 'stdout_events_enabled','false'))
         stderr_cmaxbytes = byte_size(get(section,'stderr_capture_maxbytes','0'))
         stderr_events = boolean(get(section, 'stderr_events_enabled','false'))
-        directory = get(section, 'directory', None)
         serverurl = get(section, 'serverurl', None)
         if serverurl and serverurl.strip().upper() == 'AUTO':
             serverurl = None
@@ -814,7 +821,7 @@ class ServerOptions(Options):
 
         command = get(section, 'command', None)
         if command is None:
-            raise ValueError, (
+            raise ValueError(
                 'program section %s does not specify a command' % section)
 
         process_name = process_or_group_name(
@@ -827,7 +834,7 @@ class ServerOptions(Options):
                 raise ValueError(
                     '%(process_num) must be present within process_name when '
                     'numprocs > 1')
-                    
+
         if stopasgroup and not killasgroup:
             raise ValueError("Cannot set stopasgroup=true and killasgroup=false")
 
@@ -843,6 +850,7 @@ class ServerOptions(Options):
             environment = dict_of_key_value_pairs(
                 expand(environment_str, expansions, 'environment'))
 
+            directory = get(section, 'directory', None)
             if directory:
                 directory = expand(directory, expansions, 'directory')
 
@@ -1101,22 +1109,22 @@ class ServerOptions(Options):
         try:
             self.httpservers = self.make_http_servers(supervisord)
         except socket.error, why:
-            if why[0] == errno.EADDRINUSE:
+            if why.args[0] == errno.EADDRINUSE:
                 self.usage('Another program is already listening on '
                            'a port that one of our HTTP servers is '
                            'configured to use.  Shut this program '
                            'down first before starting supervisord.')
             else:
                 help = 'Cannot open an HTTP server: socket.error reported'
-                errorname = errno.errorcode.get(why[0])
+                errorname = errno.errorcode.get(why.args[0])
                 if errorname is None:
-                    self.usage('%s %s' % (help, why[0]))
+                    self.usage('%s %s' % (help, why.args[0]))
                 else:
                     self.usage('%s errno.%s (%d)' %
-                               (help, errorname, why[0]))
+                               (help, errorname, why.args[0]))
             self.unlink_socketfiles = False
         except ValueError, why:
-            self.usage(why[0])
+            self.usage(why.args[0])
 
     def get_autochildlog_name(self, name, identifier, channel):
         prefix='%s-%s---%s-' % (name, channel, identifier)
@@ -1212,7 +1220,7 @@ class ServerOptions(Options):
 
             # always put our primary gid first in this list, otherwise we can
             # lose group info since sometimes the first group in the setgroups
-            # list gets overwritten on the subsequent setgid call (at least on 
+            # list gets overwritten on the subsequent setgid call (at least on
             # freebsd 9 with python 2.7 - this will be safe though for all unix
             # /python version combos)
             groups.insert(0, gid)
@@ -1227,14 +1235,19 @@ class ServerOptions(Options):
         os.setuid(uid)
 
     def waitpid(self):
-        # need pthread_sigmask here to avoid concurrent sigchild, but
-        # Python doesn't offer it as it's not standard across UNIX versions.
-        # there is still a race condition here; we can get a sigchild while
-        # we're sitting in the waitpid call.
+        # Need pthread_sigmask here to avoid concurrent sigchild, but Python
+        # doesn't offer in Python < 3.4.  There is still a race condition here;
+        # we can get a sigchild while we're sitting in the waitpid call.
+        # However, AFAICT, if waitpid is interrupted bu SIGCHILD, as long as we
+        # call waitpid again (which happens every so often during the normal
+        # course in the mainloop), we'll eventually reap the child that we
+        # tried to reap during the interrupted call. At least on Linux, this
+        # appears to be true, or at least stopping 50 processes at once never
+        # left zombies laying around.
         try:
             pid, sts = os.waitpid(-1, os.WNOHANG)
         except OSError, why:
-            err = why[0]
+            err = why.args[0]
             if err not in (errno.ECHILD, errno.EINTR):
                 self.logger.critical(
                     'waitpid error; a process may not be cleaned up properly')
@@ -1282,22 +1295,22 @@ class ServerOptions(Options):
 
         for limit in limits:
 
-            min = limit['min']
+            lmin = limit['min']
             res = limit['resource']
             msg = limit['msg']
             name = limit['name']
 
             soft, hard = resource.getrlimit(res)
 
-            if (soft < min) and (soft != -1): # -1 means unlimited
-                if (hard < min) and (hard != -1):
+            if (soft < lmin) and (soft != -1): # -1 means unlimited
+                if (hard < lmin) and (hard != -1):
                     # setrlimit should increase the hard limit if we are
                     # root, if not then setrlimit raises and we print usage
-                    hard = min
+                    hard = lmin
 
                 try:
-                    resource.setrlimit(res, (min, hard))
-                    msgs.append('Increased %(name)s limit to %(min)s' %
+                    resource.setrlimit(res, (lmin, hard))
+                    msgs.append('Increased %(name)s limit to %(lmin)s' %
                                 locals())
                 except (resource.error, ValueError):
                     self.usage(msg % locals())
@@ -1362,9 +1375,6 @@ class ServerOptions(Options):
     def remove(self, path):
         os.remove(path)
 
-    def exists(self, path):
-        return os.path.exists(path)
-
     def _exit(self, code):
         os._exit(code)
 
@@ -1406,16 +1416,13 @@ class ServerOptions(Options):
         try:
             data = os.read(fd, 2 << 16) # 128K
         except OSError, why:
-            if why[0] not in (errno.EWOULDBLOCK, errno.EBADF, errno.EINTR):
+            if why.args[0] not in (errno.EWOULDBLOCK, errno.EBADF, errno.EINTR):
                 raise
             data = ''
         return data
 
     def process_environment(self):
         os.environ.update(self.environment or {})
-
-    def open(self, fn, mode='r'):
-        return open(fn, mode)
 
     def chdir(self, dir):
         os.chdir(dir)
@@ -1448,6 +1455,7 @@ class ServerOptions(Options):
             for fd in pipes.values():
                 if fd is not None:
                     self.close_fd(fd)
+            raise
 
     def close_parent_pipes(self, pipes):
         for fdname in ('stdin', 'stdout', 'stderr'):
@@ -1506,10 +1514,10 @@ class ClientOptions(Options):
         section = self.configroot.supervisorctl
         if not hasattr(fp, 'read'):
             self.here = os.path.dirname(normalize_path(fp))
-            if not os.path.exists(fp):
+            if not self.exists(fp):
                 raise ValueError("could not find config file %s" % fp)
             try:
-                fp = open(fp, 'r')
+                fp = self.open(fp, 'r')
             except (IOError, OSError):
                 raise ValueError("could not read config file %s" % fp)
         config = UnhosedConfigParser()
@@ -1517,7 +1525,7 @@ class ClientOptions(Options):
         config.readfp(fp)
         sections = config.sections()
         if not 'supervisorctl' in sections:
-            raise ValueError,'.ini file does not include supervisorctl section'
+            raise ValueError('.ini file does not include supervisorctl section')
         serverurl = config.getdefault('serverurl', 'http://localhost:9001')
         if serverurl.startswith('unix://'):
             sf = serverurl[7:]
@@ -1990,7 +1998,7 @@ def make_namespec(group_name, process_name):
 def split_namespec(namespec):
     names = namespec.split(':', 1)
     if len(names) == 2:
-        # group and and process name differ
+        # group and process name differ
         group_name, process_name = names
         if not process_name or process_name == '*':
             process_name = None

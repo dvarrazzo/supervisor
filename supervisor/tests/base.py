@@ -328,6 +328,7 @@ class DummySocket:
 class DummySocketConfig:
     def __init__(self, fd):
         self.fd = fd
+        self.url = 'unix:///sock'
 
     def addr(self):
         return 'dummy addr'
@@ -592,6 +593,9 @@ class DummyMedusaChannel:
     def close_when_done(self):
         pass
 
+    def set_terminator(self, terminator):
+        pass
+
 class DummyRequest:
     command = 'GET'
     _error = None
@@ -729,7 +733,6 @@ class DummySupervisorRPCNamespace:
     def getProcessInfo(self, name):
         from supervisor import xmlrpc
         import xmlrpclib
-        from supervisor.process import ProcessStates
         for i in self.all_process_info:
             if i['name']==name:
                 info=i
@@ -756,10 +759,16 @@ class DummySupervisorRPCNamespace:
             raise Fault(xmlrpc.Faults.ALREADY_STARTED, 'ALREADY_STARTED')
         if name == 'SPAWN_ERROR':
             raise Fault(xmlrpc.Faults.SPAWN_ERROR, 'SPAWN_ERROR')
+        if name == 'ABNORMAL_TERMINATION':
+            raise Fault(xmlrpc.Faults.ABNORMAL_TERMINATION,
+                        'ABNORMAL_TERMINATION')
         return True
 
     def startProcessGroup(self, name):
         from supervisor import xmlrpc
+        from xmlrpclib import Fault
+        if name == 'BAD_NAME':
+            raise Fault(xmlrpc.Faults.BAD_NAME, 'BAD_NAME')
         return [
             {'name':'foo_00', 'group':'foo',
              'status': xmlrpc.Faults.SUCCESS,
@@ -785,6 +794,9 @@ class DummySupervisorRPCNamespace:
 
     def stopProcessGroup(self, name):
         from supervisor import xmlrpc
+        from xmlrpclib import Fault
+        if name == 'BAD_NAME':
+            raise Fault(xmlrpc.Faults.BAD_NAME, 'BAD_NAME')
         return [
             {'name':'foo_00', 'group':'foo',
              'status': xmlrpc.Faults.SUCCESS,

@@ -22,17 +22,16 @@ if sys.version_info[:2] < (2, 4) or sys.version_info[0] > 2:
     sys.stderr.write(msg)
     sys.exit(1)
 
-requires = ['setuptools', 'meld3 >= 0.6.5']
-
 if sys.version_info[:2] < (2, 5):
-    # for meld3 (it's a distutils package)
-    requires.append('elementtree')
+    # meld3 1.0.0 dropped python 2.4 support
+    # meld3 requires elementree on python 2.4 only
+    requires = ['meld3 >= 0.6.5 , < 1.0.0', 'elementtree']
+else:
+    requires = ['meld3 >= 0.6.5']
 
 from setuptools import setup, find_packages
-here = os.path.abspath(os.path.normpath(os.path.dirname(__file__)))
-
+here = os.path.abspath(os.path.dirname(__file__))
 try:
-    here = os.path.abspath(os.path.dirname(__file__))
     README = open(os.path.join(here, 'README.rst')).read()
     CHANGES = open(os.path.join(here, 'CHANGES.txt')).read()
 except:
@@ -50,37 +49,43 @@ CLASSIFIERS = [
     'Topic :: System :: Boot',
     'Topic :: System :: Monitoring',
     'Topic :: System :: Systems Administration',
-    ]
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 2",
+    "Programming Language :: Python :: 2.4",
+    "Programming Language :: Python :: 2.5",
+    "Programming Language :: Python :: 2.6",
+    "Programming Language :: Python :: 2.7",
+]
 
 version_txt = os.path.join(here, 'supervisor/version.txt')
 supervisor_version = open(version_txt).read().strip()
 
 dist = setup(
-    name = 'supervisor',
-    version = supervisor_version,
-    license = 'BSD-derived (http://www.repoze.org/LICENSE.txt)',
-    url = 'http://supervisord.org/',
-    description = "A system for controlling process state under UNIX",
-    long_description=README + '\n\n' +  CHANGES,
-    classifiers = CLASSIFIERS,
-    author = "Chris McDonough",
-    author_email = "chrism@plope.com",
-    maintainer = "Mike Naberezny",
-    maintainer_email = "mike@naberezny.com",
-    packages = find_packages(),
-    install_requires = requires,
-    extras_require = {'iterparse':['cElementTree >= 1.0.2']},
-    tests_require = ['mock >= 0.5.0'],
-    include_package_data = True,
-    zip_safe = False,
-    namespace_packages = ['supervisor'],
-    test_suite = "supervisor.tests",
-    entry_points = {
-     'console_scripts': [
+    name='supervisor',
+    version=supervisor_version,
+    license='BSD-derived (http://www.repoze.org/LICENSE.txt)',
+    url='http://supervisord.org/',
+    description="A system for controlling process state under UNIX",
+    long_description=README + '\n\n' + CHANGES,
+    classifiers=CLASSIFIERS,
+    author="Chris McDonough",
+    author_email="chrism@plope.com",
+    maintainer="Chris McDonough",
+    maintainer_email="chrism@plope.com",
+    packages=find_packages(),
+    install_requires=requires,
+    extras_require={'iterparse': ['cElementTree >= 1.0.2']},
+    tests_require=['mock >= 0.5.0'],
+    include_package_data=True,
+    zip_safe=False,
+    namespace_packages=['supervisor'],
+    test_suite="supervisor.tests",
+    entry_points={
+        'console_scripts': [
          'supervisord = supervisor.supervisord:main',
          'supervisorctl = supervisor.supervisorctl:main',
          'echo_supervisord_conf = supervisor.confecho:main',
          'pidproxy = supervisor.pidproxy:main',
-         ],
-      },
-    )
+        ],
+    },
+)

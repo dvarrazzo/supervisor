@@ -122,6 +122,7 @@ class Supervisor:
         if name not in self.process_groups:
             config.after_setuid()
             self.process_groups[name] = config.make_group()
+            events.notify(events.ProcessGroupAddedEvent(name))
             return True
         return False
 
@@ -129,6 +130,7 @@ class Supervisor:
         if self.process_groups[name].get_unstopped_processes():
             return False
         del self.process_groups[name]
+        events.notify(events.ProcessGroupRemovedEvent(name))
         return True
 
     def get_process_map(self):
@@ -218,7 +220,7 @@ class Supervisor:
                 r, w, x = self.options.select(r, w, x, timeout)
             except select.error, err:
                 r = w = x = []
-                if err[0] == errno.EINTR:
+                if err.args[0] == errno.EINTR:
                     self.options.logger.blather('EINTR encountered in select')
                 else:
                     raise
@@ -278,17 +280,21 @@ class Supervisor:
                 self.ticks[period] = this_tick
                 events.notify(event(this_tick, self))
 
-    def reap(self, once=False):
+    def reap(self, once=False, recursionguard=0):
+        if recursionguard == 100:
+            return
         pid, sts = self.options.waitpid()
         if pid:
             process = self.options.pidhistory.get(pid, None)
             if process is None:
-                self.options.logger.critical('reaped unknown pid %s)' % pid)
+                self.options.logger.info('reaped unknown pid %s' % pid)
             else:
                 process.finish(pid, sts)
                 del self.options.pidhistory[pid]
             if not once:
-                self.reap() # keep reaping until no more kids to reap
+                # keep reaping until no more kids to reap, but don't recurse
+                # infintely
+                self.reap(once=False, recursionguard=recursionguard+1)
 
     def handle_signal(self):
         sig = self.options.get_signal()

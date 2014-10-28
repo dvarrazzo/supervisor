@@ -34,7 +34,7 @@ class POutputDispatcherTests(unittest.TestCase):
         process = DummyProcess(config)
         dispatcher = self._makeOne(process)
         self.assertEqual(dispatcher.writable(), False)
-        
+
     def test_readable_open(self):
         options = DummyOptions()
         config = DummyPConfig(options, 'process1', '/bin/process1')
@@ -67,7 +67,19 @@ class POutputDispatcherTests(unittest.TestCase):
         dispatcher = self._makeOne(process)
         self.assertEqual(dispatcher.handle_read_event(), None)
         self.assertEqual(dispatcher.output_buffer, 'abc')
-        
+
+    def test_handle_read_event_no_data_closes(self):
+        options = DummyOptions()
+        options.readfd_result = ''
+        config = DummyPConfig(options, 'process1', '/bin/process1',
+                              stdout_capture_maxbytes=100)
+        process = DummyProcess(config)
+        dispatcher = self._makeOne(process)
+        self.assertFalse(dispatcher.closed)
+        self.assertEqual(dispatcher.handle_read_event(), None)
+        self.assertEqual(dispatcher.output_buffer, '')
+        self.assertTrue(dispatcher.closed)
+
     def test_handle_error(self):
         options = DummyOptions()
         config = DummyPConfig(options, 'test', '/test')
@@ -160,7 +172,7 @@ class POutputDispatcherTests(unittest.TestCase):
         self.assertEqual(len(L), 1)
         event = L[0]
         self.assertEqual(event.process, process)
-        self.assertEqual(event.data, 'hello from stdout') 
+        self.assertEqual(event.data, 'hello from stdout')
 
     def test_record_output_does_not_emit_stdout_event_when_disabled(self):
         options = DummyOptions()
@@ -197,7 +209,7 @@ class POutputDispatcherTests(unittest.TestCase):
         self.assertEqual(len(L), 1)
         event = L[0]
         self.assertEqual(event.process, process)
-        self.assertEqual(event.data, 'hello from stderr') 
+        self.assertEqual(event.data, 'hello from stderr')
 
     def test_record_output_does_not_emit_stderr_event_when_disabled(self):
         options = DummyOptions()
@@ -288,10 +300,12 @@ class POutputDispatcherTests(unittest.TestCase):
 
         finally:
             try:
+                dispatcher.capturelog.close()
+                dispatcher.childlog.close()
                 os.remove(logfile)
             except (OSError, IOError):
                 pass
-        
+
     def test_stdout_capturemode_multiple_buffers(self):
         from supervisor.events import ProcessCommunicationEvent
         from supervisor.events import subscribe
@@ -300,7 +314,8 @@ class POutputDispatcherTests(unittest.TestCase):
             events.append(event)
         subscribe(ProcessCommunicationEvent, doit)
         import string
-        letters = string.letters
+        # ascii_letters for python 3
+        letters = getattr(string, "letters", string.ascii_letters)
         digits = string.digits * 4
         BEGIN_TOKEN = ProcessCommunicationEvent.BEGIN_TOKEN
         END_TOKEN = ProcessCommunicationEvent.END_TOKEN
@@ -351,6 +366,8 @@ class POutputDispatcherTests(unittest.TestCase):
 
         finally:
             try:
+                dispatcher.capturelog.close()
+                dispatcher.childlog.close()
                 os.remove(logfile)
             except (OSError, IOError):
                 pass
@@ -448,8 +465,8 @@ class POutputDispatcherTests(unittest.TestCase):
         self.assertEqual(dispatcher.closed, True)
         dispatcher.close() # make sure we don't error if we try to close twice
         self.assertEqual(dispatcher.closed, True)
-        
-                        
+
+
 class PInputDispatcherTests(unittest.TestCase):
     def _getTargetClass(self):
         from supervisor.dispatchers import PInputDispatcher
@@ -550,7 +567,7 @@ class PInputDispatcherTests(unittest.TestCase):
         process = DummyProcess(None)
         dispatcher = self._makeOne(process)
         self.assertRaises(NotImplementedError, dispatcher.handle_read_event)
-        
+
     def test_handle_error(self):
         options = DummyOptions()
         config = DummyPConfig(options, 'test', '/test')
@@ -609,7 +626,7 @@ class PEventListenerDispatcherTests(unittest.TestCase):
         process = DummyProcess(config)
         dispatcher = self._makeOne(process)
         self.assertEqual(dispatcher.writable(), False)
-        
+
     def test_readable_open(self):
         options = DummyOptions()
         config = DummyPConfig(options, 'process1', '/bin/process1')
@@ -1042,7 +1059,7 @@ class PEventListenerDispatcherTests(unittest.TestCase):
             drepr.find('<supervisor.tests.base.DummyProcess instance at'),
             -1)
         self.assertTrue(drepr.endswith('(stdout)>'), drepr)
-    
+
     def test_close(self):
         options = DummyOptions()
         config = DummyPConfig(options, 'process1', '/bin/process1')

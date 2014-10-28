@@ -2,18 +2,10 @@ import grp
 import os
 import pwd
 import signal
-import sys
 import socket
 import shlex
 import urlparse
 from supervisor.loggers import getLevelNumByDescription
-
-# I dont know why we bother, this doesn't run on Windows, but just
-# in case it ever does, avoid this bug magnet by leaving it.
-if sys.platform[:3] == "win": # pragma: no cover
-    DEFAULT_HOST = "localhost"
-else:
-    DEFAULT_HOST = ""
 
 here = None
 
@@ -32,10 +24,8 @@ def process_or_group_name(name):
 def integer(value):
     try:
         return int(value)
-    except ValueError:
-        return long(value) # why does this help? (CM)
-    except OverflowError:
-        return long(value)
+    except (ValueError, OverflowError):
+        return long(value) # why does this help ValueError? (CM)
 
 TRUTHY_STRINGS = ('yes', 'true', 'on', '1')
 FALSY_STRINGS  = ('no', 'false', 'off', '0')
@@ -92,7 +82,7 @@ def dict_of_key_value_pairs(arg):
     while i < tokens_len:
         k_eq_v = tokens[i:i+3]
         if len(k_eq_v) != 3 or k_eq_v[1] != '=':
-            raise ValueError, "Unexpected end of key/value pairs"
+            raise ValueError("Unexpected end of key/value pairs")
         D[k_eq_v[0]] = k_eq_v[2].strip('\'"')
         i += 4
     return D
@@ -119,22 +109,22 @@ def logfile_name(val):
 class RangeCheckedConversion:
     """Conversion helper that range checks another conversion."""
 
-    def __init__(self, conversion, min=None, max=None):
-        self._min = min
-        self._max = max
+    def __init__(self, conversion, rmin=None, rmax=None):
+        self._min = rmin
+        self._max = rmax
         self._conversion = conversion
 
     def __call__(self, value):
         v = self._conversion(value)
         if self._min is not None and v < self._min:
             raise ValueError("%s is below lower bound (%s)"
-                             % (`v`, `self._min`))
+                             % (repr(v), repr(self._min)))
         if self._max is not None and v > self._max:
             raise ValueError("%s is above upper bound (%s)"
-                             % (`v`, `self._max`))
+                             % (repr(v), repr(self._max)))
         return v
 
-port_number = RangeCheckedConversion(integer, min=1, max=0xffff).__call__
+port_number = RangeCheckedConversion(integer, rmin=1, rmax=0xffff).__call__
 
 def inet_address(s):
     # returns (host, port) tuple
@@ -152,7 +142,7 @@ def inet_address(s):
         except ValueError:
             raise ValueError("not a valid port number: %r " %s)
     if not host or host == '*':
-        host = DEFAULT_HOST
+        host = ''
     return host, port
 
 class SocketAddress:
@@ -285,7 +275,7 @@ def colon_separated_user_group(arg):
             gid = name_to_gid(parts[1])
         return (uid, gid)
     except:
-        raise ValueError, 'Invalid user:group definition %s' % arg
+        raise ValueError('Invalid user:group definition %s' % arg)
 
 def name_to_uid(name):
     """ Find a user ID from a string containing a user name or ID.
@@ -332,7 +322,7 @@ def gid_for_uid(uid):
 def octal_type(arg):
     try:
         return int(arg, 8)
-    except TypeError:
+    except (TypeError, ValueError):
         raise ValueError('%s can not be converted to an octal type' % arg)
 
 def existing_directory(v):
@@ -351,8 +341,8 @@ def existing_dirpath(v):
         return nv
     if os.path.isdir(dir):
         return nv
-    raise ValueError, ('The directory named as part of the path %s '
-                       'does not exist.' % v)
+    raise ValueError('The directory named as part of the path %s '
+                     'does not exist.' % v)
 
 def logging_level(value):
     s = str(value).lower()
@@ -396,17 +386,22 @@ def url(value):
         return value
     raise ValueError("value %s is not a URL" % value)
 
+# all valid signal numbers
+SIGNUMS = [ getattr(signal, k) for k in dir(signal) if k.startswith('SIG') ]
+
 def signal_number(value):
-    result = None
     try:
-        result = int(value)
+        num = int(value)
     except (ValueError, TypeError):
-        result = getattr(signal, 'SIG'+value, None)
-    try:
-        result = int(result)
-        return result
-    except (ValueError, TypeError):
-        raise ValueError('value %s is not a signal name/number' % value)
+        name = value.strip().upper()
+        if not name.startswith('SIG'):
+            name = 'SIG' + name
+        num = getattr(signal, name, None)
+        if num is None:
+            raise ValueError('value %s is not a valid signal name' % value)
+    if num not in SIGNUMS:
+        raise ValueError('value %s is not a valid signal number' % value)
+    return num
 
 class RestartWhenExitUnexpected:
     pass

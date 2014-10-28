@@ -13,6 +13,13 @@ from supervisor.tests.base import DummyProcess
 from supervisor.tests.base import DummyProcessGroup
 from supervisor.tests.base import DummyDispatcher
 
+try:
+    import pstats
+except ImportError: # pragma: no cover
+    # Debian-packaged pythons may not have the pstats module
+    # unless the "python-profiler" package is installed.
+    pstats = None
+
 class EntryPointTests(unittest.TestCase):
     def test_main_noprofile(self):
         from supervisor.supervisord import main
@@ -33,9 +40,9 @@ class EntryPointTests(unittest.TestCase):
             sys.stdout = old_stdout
             shutil.rmtree(tempdir)
         output = new_stdout.getvalue()
-        self.failUnless(output.find('supervisord started') != 1, output)
+        self.assertTrue(output.find('supervisord started') != 1, output)
 
-    if sys.version_info[:2] >= (2, 4):
+    if pstats:
         def test_main_profile(self):
             from supervisor.supervisord import main
             conf = os.path.join(
@@ -55,14 +62,14 @@ class EntryPointTests(unittest.TestCase):
                 sys.stdout = old_stdout
                 shutil.rmtree(tempdir)
             output = new_stdout.getvalue()
-            self.failUnless(output.find('cumulative time, call count') != -1,
+            self.assertTrue(output.find('cumulative time, call count') != -1,
                             output)
 
 class SupervisordTests(unittest.TestCase):
     def tearDown(self):
         from supervisor.events import clear
         clear()
-        
+
     def _getTargetClass(self):
         from supervisor.supervisord import Supervisor
         return Supervisor
@@ -106,7 +113,7 @@ class SupervisordTests(unittest.TestCase):
         supervisord.main()
         self.assertEqual(options.environment_processed, True)
         self.assertEqual(options.fds_cleaned_up, True)
-        self.failIf(hasattr(options, 'rlimits_set'))
+        self.assertFalse(hasattr(options, 'rlimits_set'))
         self.assertEqual(options.make_logger_messages,
                          (['setuid_called'], [], []))
         self.assertEqual(options.autochildlogdir_cleared, True)
@@ -131,9 +138,26 @@ class SupervisordTests(unittest.TestCase):
         process.waitstatus = None, None
         options.pidhistory = {1:process}
         supervisord = self._makeOne(options)
-        
+
         supervisord.reap(once=True)
         self.assertEqual(process.finished, (1,1))
+
+    def test_reap_unknown_pid(self):
+        options = DummyOptions()
+        options.waitpid_return = 2, 0 # pid, status
+        pconfig = DummyPConfig(options, 'process', 'process', '/bin/process1')
+        process = DummyProcess(pconfig)
+        process.drained = False
+        process.killing = True
+        process.laststop = None
+        process.waitstatus = None, None
+        options.pidhistory = {1: process}
+        supervisord = self._makeOne(options)
+
+        supervisord.reap(once=True)
+        self.assertEqual(process.finished, None)
+        self.assertEqual(options.logger.data[0],
+                         'reaped unknown pid 2')
 
     def test_handle_sigterm(self):
         options = DummyOptions()
@@ -170,6 +194,18 @@ class SupervisordTests(unittest.TestCase):
         self.assertEqual(supervisord.options.mood, 0)
         self.assertEqual(options.logger.data[0],
                          'received SIGHUP indicating restart request')
+
+    def test_handle_sigchld(self):
+        options = DummyOptions()
+        options._signal = signal.SIGCHLD
+        supervisord = self._makeOne(options)
+        supervisord.handle_signal()
+        self.assertEqual(supervisord.options.mood, 1)
+        # supervisor.options.signame(signal.SIGCHLD) may return "SIGCLD"
+        # on linux or other systems where SIGCHLD = SIGCLD.
+        msgs = ('received SIGCHLD indicating a child quit',
+                'received SIGCLD indicating a child quit')
+        self.assertTrue(options.logger.data[0] in msgs)
 
     def test_handle_sigusr2(self):
         options = DummyOptions()
@@ -320,6 +356,24 @@ class SupervisordTests(unittest.TestCase):
         self.assertEqual(group, supervisord.process_groups['foo'])
         self.assertTrue(not result)
 
+    def test_add_process_group_event(self):
+        from supervisor import events
+        L = []
+        def callback(event):
+            L.append(1)
+        events.subscribe(events.ProcessGroupAddedEvent, callback)
+        options = DummyOptions()
+        pconfig = DummyPConfig(options, 'foo', 'foo', '/bin/foo')
+        gconfig = DummyPGroupConfig(options,'foo', pconfigs=[pconfig])
+        options.process_group_configs = [gconfig]
+        supervisord = self._makeOne(options)
+
+        supervisord.add_process_group(gconfig)
+
+        options.test = True
+        supervisord.runforever()
+        self.assertEqual(L, [1])
+
     def test_remove_process_group(self):
         options = DummyOptions()
         pconfig = DummyPConfig(options, 'foo', 'foo', '/bin/foo')
@@ -338,6 +392,26 @@ class SupervisordTests(unittest.TestCase):
         result = supervisord.remove_process_group('foo')
         self.assertEqual(supervisord.process_groups.keys(), ['foo'])
         self.assertTrue(not result)
+
+    def test_remove_process_group_event(self):
+        from supervisor import events
+        L = []
+        def callback(event):
+            L.append(1)
+        events.subscribe(events.ProcessGroupRemovedEvent, callback)
+        options = DummyOptions()
+        pconfig = DummyPConfig(options, 'foo', 'foo', '/bin/foo')
+        gconfig = DummyPGroupConfig(options,'foo', pconfigs=[pconfig])
+        options.process_group_configs = [gconfig]
+        supervisord = self._makeOne(options)
+
+        supervisord.add_process_group(gconfig)
+        supervisord.process_groups['foo'].stopped_processes = [DummyProcess(None)]
+        supervisord.remove_process_group('foo')
+        options.test = True
+        supervisord.runforever()
+
+        self.assertEqual(L, [1])
 
     def test_runforever_emits_generic_startup_event(self):
         from supervisor import events
@@ -393,7 +467,6 @@ class SupervisordTests(unittest.TestCase):
         options = DummyOptions()
         supervisord = self._makeOne(options)
         pconfig = DummyPConfig(options, 'foo', '/bin/foo',)
-        process = DummyProcess(pconfig)
         gconfig = DummyPGroupConfig(options, pconfigs=[pconfig])
         pgroup = DummyProcessGroup(gconfig)
         readable = DummyDispatcher(readable=True)
@@ -413,7 +486,6 @@ class SupervisordTests(unittest.TestCase):
         options = DummyOptions()
         supervisord = self._makeOne(options)
         pconfig = DummyPConfig(options, 'foo', '/bin/foo',)
-        process = DummyProcess(pconfig)
         gconfig = DummyPGroupConfig(options, pconfigs=[pconfig])
         pgroup = DummyProcessGroup(gconfig)
         from supervisor.medusa import asyncore_25 as asyncore
@@ -444,12 +516,11 @@ class SupervisordTests(unittest.TestCase):
         self.assertTrue(isinstance(L[0], events.SupervisorStateChangeEvent))
         self.assertTrue(isinstance(L[1], events.SupervisorStoppingEvent))
         self.assertTrue(isinstance(L[1], events.SupervisorStateChangeEvent))
-        
+
     def test_exit(self):
         options = DummyOptions()
         supervisord = self._makeOne(options)
         pconfig = DummyPConfig(options, 'foo', '/bin/foo',)
-        process = DummyProcess(pconfig)
         gconfig = DummyPGroupConfig(options, pconfigs=[pconfig])
         pgroup = DummyProcessGroup(gconfig)
         L = []
@@ -506,14 +577,14 @@ class SupervisordTests(unittest.TestCase):
         self.assertEqual(supervisord.ticks[3600], 0)
         self.assertEqual(len(L), 1)
         self.assertEqual(L[-1].__class__, events.Tick5Event)
-        
+
         supervisord.tick(now=61)
         self.assertEqual(supervisord.ticks[5], 60)
         self.assertEqual(supervisord.ticks[60], 60)
         self.assertEqual(supervisord.ticks[3600], 0)
         self.assertEqual(len(L), 3)
         self.assertEqual(L[-1].__class__, events.Tick60Event)
-        
+
         supervisord.tick(now=3601)
         self.assertEqual(supervisord.ticks[5], 3600)
         self.assertEqual(supervisord.ticks[60], 3600)
