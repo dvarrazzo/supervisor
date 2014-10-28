@@ -17,6 +17,7 @@ from supervisor.states import STOPPED_STATES
 from supervisor.options import decode_wait_status
 from supervisor.options import signame
 from supervisor.options import ProcessException, BadCommand
+from supervisor.options import make_namespec
 
 from supervisor.dispatchers import EventListenerStates
 
@@ -59,6 +60,16 @@ class Subprocess:
         self.dispatchers = {}
         self.pipes = {}
         self.state = ProcessStates.STOPPED
+
+    @property
+    def logname(self):
+        """
+        The name of this subprocess as used in logging.
+        """
+        if self.group is None:
+            return self.config.name
+        else:
+            return make_namespec(self.group.config.name, self.config.name)
 
     def removelogs(self):
         for dispatcher in self.dispatchers.values():
@@ -176,7 +187,7 @@ class Subprocess:
             current_state = getProcessStateDescription(self.state)
             allowable_states = ' '.join(map(getProcessStateDescription, states))
             raise AssertionError('Assertion failed for %s: %s not in %s' %  (
-                self.config.name, current_state, allowable_states))
+                self.logname, current_state, allowable_states))
 
     def record_spawnerr(self, msg):
         self.spawnerr = msg
@@ -190,7 +201,7 @@ class Subprocess:
         options = self.config.options
 
         if self.pid:
-            msg = 'process %r already running' % self.config.name
+            msg = 'process %r already running' % self.logname
             options.logger.warn(msg)
             return
 
@@ -221,7 +232,7 @@ class Subprocess:
             code = why.args[0]
             if code == errno.EMFILE:
                 # too many file descriptors open
-                msg = 'too many open files to spawn %r' % self.config.name
+                msg = 'too many open files to spawn %r' % self.logname
             else:
                 msg = 'unknown error: %s' % errno.errorcode.get(code, code)
             self.record_spawnerr(msg)
@@ -236,7 +247,7 @@ class Subprocess:
             if code == errno.EAGAIN:
                 # process table full
                 msg  = ('Too many processes in process table to spawn %r' %
-                        self.config.name)
+                        self.logname)
             else:
                 msg = 'unknown error: %s' % errno.errorcode.get(code, code)
 
@@ -258,7 +269,7 @@ class Subprocess:
         self.pid = pid
         options = self.config.options
         options.close_child_pipes(self.pipes)
-        options.logger.info('spawned: %r with pid %s' % (self.config.name, pid))
+        options.logger.info('spawned: %r with pid %s' % (self.logname, pid))
         self.spawnerr = None
         self.delay = time.time() + self.config.startsecs
         options.pidhistory[pid] = self
@@ -370,14 +381,14 @@ class Subprocess:
         # Properly stop processes in BACKOFF state.
         if self.state == ProcessStates.BACKOFF:
             msg = ("Attempted to kill %s, which is in BACKOFF state." %
-                   (self.config.name))
+                   (self.logname))
             options.logger.debug(msg)
             self.change_state(ProcessStates.STOPPED)
             return None
 
         if not self.pid:
             msg = ("attempted to kill %s with sig %s but it wasn't running" %
-                   (self.config.name, signame(sig)))
+                   (self.logname, signame(sig)))
             options.logger.debug(msg)
             return msg
 
@@ -393,7 +404,7 @@ class Subprocess:
             as_group = "process group "
 
         options.logger.debug('killing %s (pid %s) %swith signal %s'
-                             % (self.config.name,
+                             % (self.logname,
                                 self.pid,
                                 as_group,
                                 signame(sig))
@@ -419,7 +430,7 @@ class Subprocess:
             io = StringIO.StringIO()
             traceback.print_exc(file=io)
             tb = io.getvalue()
-            msg = 'unknown problem killing %s (%s):%s' % (self.config.name,
+            msg = 'unknown problem killing %s (%s):%s' % (self.logname,
                                                           self.pid, tb)
             options.logger.critical(msg)
             self.change_state(ProcessStates.UNKNOWN)
@@ -439,7 +450,7 @@ class Subprocess:
 
         now = time.time()
         self.laststop = now
-        processname = self.config.name
+        processname = self.logname
 
         tooquickly = now - self.laststart < self.config.startsecs
         exit_expected = es in self.config.exitcodes
@@ -521,7 +532,7 @@ class Subprocess:
     def __repr__(self):
         return '<Subprocess at %s with name %s in state %s>' % (
             id(self),
-            self.config.name,
+            self.logname,
             getProcessStateDescription(self.get_state()))
 
     def get_state(self):
@@ -566,7 +577,7 @@ class Subprocess:
                 msg = (
                     'entered RUNNING state, process has stayed up for '
                     '> than %s seconds (startsecs)' % self.config.startsecs)
-                logger.info('success: %s %s' % (self.config.name, msg))
+                logger.info('success: %s %s' % (self.logname, msg))
 
         if state == ProcessStates.BACKOFF:
             if self.backoff > self.config.startretries:
@@ -575,7 +586,7 @@ class Subprocess:
                 self.give_up()
                 msg = ('entered FATAL state, too many start retries too '
                        'quickly')
-                logger.info('gave up: %s %s' % (self.config.name, msg))
+                logger.info('gave up: %s %s' % (self.logname, msg))
 
         elif state == ProcessStates.STOPPING:
             time_left = self.delay - now
@@ -584,7 +595,7 @@ class Subprocess:
                 # sigkill.  if this doesn't kill it, the process will be stuck
                 # in the STOPPING state forever.
                 self.config.options.logger.warn(
-                    'killing %r (%s) with SIGKILL' % (self.config.name,
+                    'killing %r (%s) with SIGKILL' % (self.logname,
                                                       self.pid))
                 self.kill(signal.SIGKILL)
 
@@ -778,7 +789,7 @@ class EventListenerPool(ProcessGroupBase):
         else:
             self.config.options.logger.debug(
                 'rebuffering event %s for pool %s (bufsize %s)' % (
-                (event.serial, self.config.name, len(self.event_buffer))))
+                (event.serial, self.logname, len(self.event_buffer))))
 
         if len(self.event_buffer) >= self.config.buffer_size:
             if self.event_buffer:
@@ -786,7 +797,7 @@ class EventListenerPool(ProcessGroupBase):
                 discarded_event = self.event_buffer.pop(0)
                 self.config.options.logger.error(
                     'pool %s event buffer overflowed, discarding event %s' % (
-                    (self.config.name, discarded_event.serial)))
+                    (self.logname, discarded_event.serial)))
         if head:
             self.event_buffer.insert(0, event)
         else:
