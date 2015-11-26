@@ -789,7 +789,7 @@ class EventListenerPool(ProcessGroupBase):
         else:
             self.config.options.logger.debug(
                 'rebuffering event %s for pool %s (bufsize %s)' % (
-                (event.serial, self.logname, len(self.event_buffer))))
+                (event.serial, self.config.name, len(self.event_buffer))))
 
         if len(self.event_buffer) >= self.config.buffer_size:
             if self.event_buffer:
@@ -797,7 +797,7 @@ class EventListenerPool(ProcessGroupBase):
                 discarded_event = self.event_buffer.pop(0)
                 self.config.options.logger.error(
                     'pool %s event buffer overflowed, discarding event %s' % (
-                    (self.logname, discarded_event.serial)))
+                    (self.config.name, discarded_event.serial)))
         if head:
             self.event_buffer.insert(0, event)
         else:
